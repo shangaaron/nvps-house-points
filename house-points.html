@@ -1,0 +1,375 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NVPS House Points</title>
+  <meta name="description" content="Nene Valley Primary School - Live House Points" />
+  <style>
+    :root{
+      --bg:#f3faf8;
+      --surface:#ffffff;
+      --subtle:#eef7f3;
+      --text:#1b2b34;
+      --muted:#64748b;
+      --primary:#2a7c6f;
+      --primaryText:#ffffff;
+      --outline:#cfe5dd;
+      --amber:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{min-height:80vh;padding:16px}
+    .container{max-width:1080px;margin:0 auto}
+    h1{margin:0}
+    .header{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .headerLeft{display:flex;gap:12px;align-items:center}
+    .logo{height:40px;width:auto;border-radius:8px;display:none}
+    .lead{color:var(--muted);margin:6px 0 0}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:1024px){ .row{grid-template-columns:repeat(5,1fr)} }
+    .card{background:var(--surface);border:1px solid var(--outline);border-radius:16px;box-shadow:0 4px 14px rgba(0,0,0,0.06);padding:16px;display:flex;flex-direction:column}
+    .tubeWrap{position:relative;width:100%;height:260px;border:1px solid var(--outline);border-radius:28px;overflow:hidden;background:var(--subtle)}
+    .fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,var(--tubeGradStart),var(--tubeGradEnd));height:0;transition:height 1.2s ease}
+    .ticks{position:relative}
+    .tick{position:absolute;left:0;right:0;border-top:1px solid var(--outline);font-size:10px;color:var(--muted)}
+    .tick span{position:absolute;left:4px;top:0;transform:translateY(-50%);background:var(--subtle);padding:0 4px;border-radius:4px}
+    .houseHeader{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .houseMeta{display:flex;align-items:center;gap:8px}
+    .dot{width:10px;height:10px;border-radius:999px;display:inline-block}
+    .score{font-weight:700;font-size:20px}
+    .btnRow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
+    .btn{border:none;border-radius:10px;padding:8px 10px;font-size:14px;cursor:pointer}
+    .btn.primary{background:var(--primary);color:var(--primaryText)}
+    .btn.muted{background:var(--subtle);color:var(--text)}
+    .btn.outline{background:var(--surface);border:1px solid var(--outline);color:var(--text)}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    .termGrid{display:grid;grid-template-columns:1fr;gap:10px}
+    @media(min-width:640px){ .termGrid{grid-template-columns:repeat(2,1fr)} }
+    @media(min-width:1024px){ .termGrid{grid-template-columns:repeat(5,1fr)} }
+    .termCard{background:var(--surface);border:1px solid var(--outline);border-radius:16px;padding:12px}
+    .leadBadge{color:#92400e;display:inline-flex;gap:6px;align-items:center;font-size:12px}
+    .footer{color:var(--muted);margin-top:24px;font-size:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    /* toast & confirm */
+    .confirmWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:50;width:min(680px,92vw)}
+    .confirm{background:var(--surface);border:1px solid var(--outline);border-radius:16px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.08);display:flex;gap:8px;align-items:center}
+    .confirm .spacer{flex:1}
+    .toasts{position:fixed;right:16px;bottom:16px;z-index:50;display:flex;flex-direction:column;gap:8px}
+    .toast{background:rgba(255,255,255,.95);border:1px solid var(--outline);border-radius:12px;padding:8px 10px;box-shadow:0 6px 16px rgba(0,0,0,.08);display:flex;gap:8px;align-items:center}
+    .link{color:var(--primary);text-decoration:none}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + ReactDOM (UMD) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel standalone so we can write JSX here -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // Config
+    const MAX_POINTS = 1200;
+    const TICK_STEP = 300;
+    const STORAGE_KEY = "housepoints:embed:v1";
+    const DEFAULT_PASSCODE = "captain";
+
+    const HOUSES = [
+      { key:"hawking", name:"Hawking", color:"#7e22ce" },
+      { key:"darwin",  name:"Darwin",  color:"#16a34a" },
+      { key:"newton",  name:"Newton",  color:"#eab308" },
+      { key:"jackson", name:"Jackson", color:"#dc2626" },
+      { key:"curie",   name:"Curie",   color:"#2563eb" },
+    ];
+
+    function clamp(n, min, max){ return Math.min(max, Math.max(min, n)); }
+    function computeHeightPct(v){ return clamp((v / MAX_POINTS) * 100, 0, 100); }
+    function makeTicks(){ const out = []; for(let t=TICK_STEP;t<=MAX_POINTS;t+=TICK_STEP) out.push(t); return out; }
+    function computeWinners(scores){
+      const values = Object.values(scores);
+      if(values.length===0) return [];
+      const mx = Math.max(...values);
+      if(mx<=0) return [];
+      return Object.keys(scores).filter(k => scores[k]===mx);
+    }
+
+    function usePersistedState(key, init){
+      const [val, setVal] = useState(() => {
+        try{
+          const saved = localStorage.getItem(key);
+          if(saved) return JSON.parse(saved);
+        }catch{}
+        return init;
+      });
+      useEffect(() => {
+        try{ localStorage.setItem(key, JSON.stringify(val)); }catch{}
+      }, [key, val]);
+      return [val, setVal];
+    }
+
+    function App(){
+      const url = new URL(window.location.href);
+      const logo = url.searchParams.get("logo"); // optional logo url
+      const startPresent = url.searchParams.get("present"); // 'hidden' to start empty
+
+      const [points, setPoints] = usePersistedState(STORAGE_KEY + ":points",
+        { hawking:0, darwin:0, newton:0, jackson:0, curie:0 }
+      );
+      const [termWins, setTermWins] = usePersistedState(STORAGE_KEY + ":termWins",
+        { hawking:0, darwin:0, newton:0, jackson:0, curie:0 }
+      );
+
+      const [captain, setCaptain] = useState(false);
+      const [pass, setPass] = useState("");
+
+      const [presentMode, setPresentMode] = useState("live"); // 'live' | 'hidden'
+      const [visiblePoints, setVisiblePoints] = useState(points);
+      const [activeRevealKey, setActiveRevealKey] = useState(null);
+
+      useEffect(() => {
+        if(presentMode==="live") setVisiblePoints(points);
+      }, [points, presentMode]);
+
+      useEffect(() => {
+        if(startPresent === "hidden") hideScores();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      const leader = useMemo(() => {
+        const entries = HOUSES.map(h => [h.key, visiblePoints[h.key]||0]);
+        const max = Math.max(...entries.map(([,v])=>v));
+        if(max===-Infinity) return null;
+        const winners = entries.filter(([,v])=>v===max).map(([k])=>k);
+        return { max, winners };
+      }, [visiblePoints]);
+
+      // toasts + confirm
+      const [toasts, setToasts] = useState([]);
+      const toastId = useRef(1);
+      function pushToast(msg){
+        const id = toastId.current++;
+        setToasts(t => [...t, {id, msg}]);
+        setTimeout(() => setToasts(t => t.filter(x => x.id!==id)), 3200);
+      }
+      const [confirm, setConfirm] = useState(null); // { msg, onConfirm }
+
+      function addPoint(key, amt){
+        if(!captain) return;
+        setPoints(p => {
+          const next = clamp((p[key]||0) + amt, 0, MAX_POINTS);
+          const updated = { ...p, [key]: next };
+          if(presentMode==="live") setVisiblePoints(v => ({ ...v, [key]: next }));
+          return updated;
+        });
+      }
+
+      function hideScores(){
+        const zero = { hawking:0, darwin:0, newton:0, jackson:0, curie:0 };
+        setVisiblePoints(zero);
+        setActiveRevealKey(null);
+        setPresentMode("hidden");
+      }
+      function revealNext(){
+        const next = HOUSES.find(h => visiblePoints[h.key] !== points[h.key]);
+        if(!next){
+          setActiveRevealKey(null);
+          setPresentMode("live");
+          return;
+        }
+        setActiveRevealKey(next.key);
+        // CSS transition handles smooth fill
+        setVisiblePoints(v => ({ ...v, [next.key]: points[next.key] }));
+        setTimeout(() => setActiveRevealKey(prev => prev===next.key ? null : prev), 1800);
+      }
+
+      function resetWeek(){
+        const zero = { hawking:0, darwin:0, newton:0, jackson:0, curie:0 };
+        setPoints(zero);
+        setVisiblePoints(zero);
+        setPresentMode("live");
+        pushToast("Scores reset to 0.");
+      }
+      function logWeek(){
+        const winners = computeWinners(points);
+        if(winners.length===0){ pushToast("No winner yet — add some points first."); return; }
+        setTermWins(w => {
+          const next = { ...w };
+          winners.forEach(k => { next[k] = (next[k]||0) + 1; });
+          return next;
+        });
+        const zero = { hawking:0, darwin:0, newton:0, jackson:0, curie:0 };
+        setPoints(zero);
+        setVisiblePoints(zero);
+        setPresentMode("live");
+        const names = winners.map(k => HOUSES.find(h => h.key===k).name).join(", ");
+        pushToast(`Logged this week: ${names} +1. Scores reset.`);
+      }
+      function resetTermWins(){
+        const zero = { hawking:0, darwin:0, newton:0, jackson:0, curie:0 };
+        setTermWins(zero);
+        pushToast("Term wins reset to 0.");
+      }
+
+      return (
+        <div className="wrap">
+          <div className="container">
+            <div className="header">
+              <div>
+                <div className="headerLeft">
+                  <img id="logo" className="logo" alt="School logo" />
+                  <h1>House Points</h1>
+                </div>
+                <p className="lead">Live, colourful, and captain-approved ✨</p>
+              </div>
+              <div className="controls">
+                {!captain && (
+                  <input
+                    type="password"
+                    placeholder="Captain passcode"
+                    value={pass}
+                    onChange={e => setPass(e.target.value)}
+                    style="padding:8px 10px;border-radius:12px;border:1px solid var(--outline);background:var(--surface)"
+                    aria-label="Captain passcode"
+                  />
+                )}
+                <button className="btn primary" onClick={() => {
+                  if(captain){ setCaptain(false); setPass(""); return; }
+                  if(pass.trim()==="" || pass.trim()!==DEFAULT_PASSCODE){ alert("Incorrect passcode. (Default is 'captain' — you can change it in the file)"); return; }
+                  setCaptain(true);
+                }}>{captain ? "Captain Mode On" : "Captain Mode"}</button>
+
+                {captain && (
+                  <>
+                    <button className="btn outline" onClick={hideScores} title="Hide all tubes (empty for assembly)">Hide scores</button>
+                    <button className="btn primary" onClick={revealNext} title="Reveal next house">Reveal next</button>
+                    <button className="btn primary" onClick={() => setConfirm({ msg:"Reset all house scores to 0? This will not log a win.", onConfirm: resetWeek })}>Reset Week</button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="row" style={{marginTop: '16px'}}>
+              {HOUSES.map(h => {
+                const value = visiblePoints[h.key]||0;
+                const heightPct = computeHeightPct(value);
+                const ticks = makeTicks();
+                return (
+                  <div key={h.key} className="card">
+                    <div className="houseHeader">
+                      <div className="houseMeta">
+                        <span className="dot" style={{ background:h.color }}></span>
+                        <div style={{fontWeight:600}}>{h.name}</div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                        {leader && leader.max>0 && leader.winners.includes(h.key) && (
+                          <span className="leadBadge">👑 Lead</span>
+                        )}
+                        <div className="score" aria-live="polite" aria-atomic="true">{value}</div>
+                      </div>
+                    </div>
+
+                    <div className="tubeWrap">
+                      <div className="fill" style={{ height:`${heightPct}%`, '--tubeGradStart': h.color+'80', '--tubeGradEnd': h.color }}></div>
+                      {ticks.map(t => {
+                        const pct = (t / MAX_POINTS) * 100;
+                        return (
+                          <div className="tick" key={t} style={{ bottom:`${pct}%` }}>
+                            <span>{t}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {captain && (
+                      <div className="btnRow">
+                        <button className="btn primary" onClick={() => addPoint(h.key, 1)}>+1</button>
+                        <button className="btn primary" onClick={() => addPoint(h.key, 10)}>+10</button>
+                        <button className="btn primary" onClick={() => addPoint(h.key, 100)}>+100</button>
+                        <button className="btn muted" onClick={() => addPoint(h.key, -1)}>-1</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="card" style={{marginTop:'16px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+                <h2 style={{margin:'0'}}>Term Wins</h2>
+                {captain && (
+                  <div className="controls">
+                    <button className="btn primary" onClick={() => setConfirm({ msg:"Log this week now (add win(s) to the current leader) and reset all scores to 0?", onConfirm: logWeek })}>Log This Week</button>
+                    <button className="btn outline" onClick={() => setConfirm({ msg:"Reset all term wins to 0?", onConfirm: resetTermWins })}>Reset Term Wins</button>
+                  </div>
+                )}
+              </div>
+              <div className="termGrid" style={{marginTop:'10px'}}>
+                {HOUSES.map(h => {
+                  const leading = (() => {
+                    const max = Math.max(...Object.values(termWins));
+                    if(!isFinite(max) || max<=0) return false;
+                    return termWins[h.key] === max;
+                  })();
+                  return (
+                    <div className="termCard" key={h.key} style={leading ? { outline:`2px solid var(--amber)` } : {}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+                          <span className="dot" style={{ background:h.color }}></span>
+                          <span style={{fontWeight:600}}>{h.name}</span>
+                        </div>
+                        {leading && <span className="leadBadge">👑 Lead</span>}
+                      </div>
+                      <div style={{fontSize:'28px',fontWeight:700,marginTop:'6px'}}>{termWins[h.key]||0}</div>
+                      <div style={{color:'var(--muted)',fontSize:'14px'}}>wins this term</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="footer">
+              <span>Tip: add <code>?present=hidden</code> to the page link for assemblies (tubes start empty).</span>
+            </div>
+          </div>
+
+          {confirm && (
+            <div className="confirmWrap">
+              <div className="confirm">
+                <div>{confirm.msg}</div>
+                <div className="spacer"></div>
+                <button className="btn primary" onClick={() => { confirm.onConfirm(); setConfirm(null); }}>Confirm</button>
+                <button className="btn outline" onClick={() => setConfirm(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="toasts">
+            {toasts.map(t => (
+              <div className="toast" key={t.id}>
+                <span>{t.msg}</span>
+                <button className="btn outline" onClick={() => setToasts(ts => ts.filter(x => x.id !== t.id))}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Mount
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    // Optional: load logo if query param provided
+    (function(){
+      const url = new URL(window.location.href);
+      const logo = url.searchParams.get("logo");
+      const el = document.getElementById("logo");
+      if(logo && el){ el.src = logo; el.style.display = "block"; }
+    })();
+  </script>
+</body>
+</html>
